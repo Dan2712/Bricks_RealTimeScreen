@@ -64,6 +64,13 @@ public class ADB {
 		}
 	}
 	
+	public void terminate() {
+        if (mAndroidDebugBridge != null) {
+        	mAndroidDebugBridge = null;
+            AndroidDebugBridge.terminate();
+        }
+    }
+	
 	public IDevice[] getDevices() {
 		IDevice[] devices = null;
 		if (mAndroidDebugBridge != null)

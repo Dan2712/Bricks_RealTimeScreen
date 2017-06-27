@@ -1,5 +1,10 @@
 package MiniDecode;
 
+/**
+ * @author Dan
+ * @Description bean for stream head info
+ */
+
 public class Banner {
 	
 	private int version;

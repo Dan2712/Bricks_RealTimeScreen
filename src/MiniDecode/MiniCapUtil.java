@@ -1,14 +1,14 @@
 package MiniDecode;
-import java.awt.Image;
-import java.awt.Toolkit;
 import java.awt.image.BufferedImage;
+import java.awt.image.DataBuffer;
+import java.awt.image.DataBufferInt;
 import java.io.ByteArrayInputStream;
-import java.io.DataInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.Socket;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -26,10 +26,10 @@ import com.android.ddmlib.SyncException;
 import com.android.ddmlib.TimeoutException;
 
 import Util.Constant;
-import Util.TimeUtil;
 
 /**
  * @author Dan
+ * @Description receiving image stream from phone, and decode to a image
  */
 
 public class MiniCapUtil implements ScreenSubject{
@@ -47,9 +47,11 @@ public class MiniCapUtil implements ScreenSubject{
 	private String MINICAP_SO = "minicap.so";
 	private String MINICAP_CHMOD_COMMAND = "chmod 777 %s/%s";
 	private String MINICAP_WM_SIZE_COMMAND = "wm size";
-	private String MINICAP_START_COMMAND = "LD_LIBRARY_PATH=/data/local/tmp /data/local/tmp/minicap -P %s@%s/90";
-	private String MINICAP_TAKESCREENSHOT_COMMAND = "LD_LIBRARY_PATH=/data/local/tmp /data/local/tmp/minicap -P %s@%s/0 -s >%s";
+	private String MINICAP_START_COMMAND = "LD_LIBRARY_PATH=/data/local/tmp /data/local/tmp/minicap -P %s@%s/%s";
+	private String MINICAP_TAKESCREENSHOT_COMMAND = "LD_LIBRARY_PATH=/data/local/tmp /data/local/tmp/minicap -P %s@%s/90 -s >%s";
 	private String ADB_PULL_COMMAND = "adb -s %s pull %s %s";
+	private String ADB_GET_ORIENTATION = "dumpsys display | grep 'mDefaultViewport'";
+	private String GET_PID = "ps | grep /data/local/tmp/minicap";
 	
 	private Queue<byte[]> dataQueue = new LinkedBlockingQueue<byte[]>();
 	private List<AndroidScreenObserver> observers = new ArrayList<AndroidScreenObserver>();
@@ -62,13 +64,16 @@ public class MiniCapUtil implements ScreenSubject{
 	private IDevice device;
 	private Socket socket;
 	
+	private String PID;
+	private int orientation_tag = 0;
+	
 	public MiniCapUtil(IDevice device) {
 		this.device = device;
 		this.init();
 	}
 	
 	/**
-	 * start minicap service, and push the necessary file first
+	 * start minicap service, and push necessary files
 	 */
 	private void init() {
 		
@@ -91,12 +96,16 @@ public class MiniCapUtil implements ScreenSubject{
 			// get the screen size
 			String output = this.executeShellCommand(MINICAP_WM_SIZE_COMMAND);
 			size = output.split(":")[1].trim();
+			
+			//get the screen orientation
+			orientation_tag = dumpsOrientation();
 		} catch (SyncException | IOException | AdbCommandRejectedException | TimeoutException e1) {
 			e1.printStackTrace();
 		}
 	}
-	
-	// judge if the device support minicap
+	/**
+	 * judge if the device supported
+	 */
 	public boolean isSupoort(){
 		String supportCommand = String.format("LD_LIBRARY_PATH=/data/local/tmp /data/local/tmp/minicap -P %s@%s/0 -t", size,size);
 		String output = executeShellCommand(supportCommand);
@@ -115,7 +124,7 @@ public class MiniCapUtil implements ScreenSubject{
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
-		
+		receiver.flush();
 		return receiver.getOutput();
 	}
 	
@@ -137,6 +146,9 @@ public class MiniCapUtil implements ScreenSubject{
 		return byte_3;
 	}
 	
+	/** 
+	 * listener start
+	 */
 	public void startScreenListener() {
 		isRunning = true;
 		Thread frame = new Thread(new DataFrameCollector());
@@ -145,8 +157,21 @@ public class MiniCapUtil implements ScreenSubject{
 		convert.start();
 	}
 
+	/**
+	 * stop listener, and restart service
+	 */
 	public void stopScreenListener() {
 		isRunning = false;
+		try {
+			Thread.sleep(500);
+		} catch (InterruptedException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		dataQueue.clear();
+		String out1 = executeShellCommand("ps -x " + PID);
+		executeShellCommand("kill " + PID);
+		String out2 = executeShellCommand("ps -x " + PID);
 	}
 
 	public void takeScreenShotOnce() {
@@ -173,6 +198,29 @@ public class MiniCapUtil implements ScreenSubject{
 
 	}
 	
+	/**
+	 * get the orientation
+	 * @return 0 or 90 represented the angle
+	 */
+	private int dumpsOrientation() {
+		String output = this.executeShellCommand(ADB_GET_ORIENTATION);
+		int real_ori = Character.getNumericValue(output.charAt(72));
+		
+		switch (real_ori) {
+		case 0:
+			return 0;
+		case 1:
+			return 90;
+		}
+		
+		return 0;
+	}
+	
+	/**
+	 * generate the image from the byte[]
+	 * @param byte[]
+	 * @return bufferedimage
+	 */
 	private BufferedImage createImage(byte[] data) {
 		ByteArrayInputStream bais = new ByteArrayInputStream(data); 
 		BufferedImage image = null;
@@ -190,6 +238,11 @@ public class MiniCapUtil implements ScreenSubject{
 		return image;
 	}
 	
+	/**
+	 * Thread class that collect data
+	 * @author Dan
+	 *
+	 */
 	class DataFrameCollector implements Runnable {
 
 		private InputStream input = null;
@@ -199,7 +252,7 @@ public class MiniCapUtil implements ScreenSubject{
 			LOG.debug("start receiving data");
 			
 			try {
-				String start_command = String.format(MINICAP_START_COMMAND, size, size);
+				String start_command = String.format(MINICAP_START_COMMAND, size, size, orientation_tag);
 				
 				// start the minicap in background
 				new Thread(new Runnable() {
@@ -213,6 +266,8 @@ public class MiniCapUtil implements ScreenSubject{
 				
 				Thread.sleep(1000);
 				
+				PID = executeShellCommand(GET_PID).substring(10, 15);
+				
 				socket = new Socket("localhost", PORT);
 				input = socket.getInputStream();
 				
@@ -225,7 +280,6 @@ public class MiniCapUtil implements ScreenSubject{
 					}
 					dataQueue.add(buffer);
 				}
-				
 			} catch (IOException e) {
 				e.printStackTrace();
 			} catch (InterruptedException e) {
@@ -251,6 +305,11 @@ public class MiniCapUtil implements ScreenSubject{
 	
 	}
 	
+	/**
+	 * Thread class convert data to image byte[]
+	 * @author dan
+	 *
+	 */
 	class ImageConvert implements Runnable {
 		
 		private int readBannerBytes = 0;
@@ -258,6 +317,8 @@ public class MiniCapUtil implements ScreenSubject{
 		private int readFrameBytes = 0;
 		private int frameLength = 0;
 		private byte[] frameBody = new byte[0];
+		private volatile byte[] finalBytes = null;
+		private volatile byte[] imageByte_pre = null;
 		
 		@Override
 		public void run() {
@@ -287,21 +348,24 @@ public class MiniCapUtil implements ScreenSubject{
 										.format("Frame body does not start with JPG header"));
 								return;
 							}
-							final byte[] finalBytes = subByteArray(frameBody,
+							finalBytes = subByteArray(frameBody,
 									0, frameBody.length);
 						
-							new Thread(new Runnable() {					// convert to bufferedimage
-
-								@Override
-								public void run() {
-									// TODO Auto-generated method stub
-									BufferedImage image = createImage(finalBytes);
-									notifyObservers(image);
-								}
-							}).start();
-
+							if (imageByte_pre == null || !compareByte(finalBytes, imageByte_pre)) {
+								imageByte_pre = finalBytes;
+								new Thread(new Runnable() {					// convert to bufferedimage
+	
+									@Override
+									public void run() {
+										// TODO Auto-generated method stub
+											BufferedImage image = createImage(finalBytes);
+											notifyObservers(image);
+									}
+								}).start();
+							}
 							cursor += frameLength;
 							restore();
+							
 						} else {
 							LOG.debug("所需数据大小 : " + frameLength);
 							byte[] subByte = subByteArray(buffer, cursor, buf_length);
@@ -316,6 +380,9 @@ public class MiniCapUtil implements ScreenSubject{
 			}
 		}
 		
+		/**
+		 * banner info
+		 */
 		private void restore() {
 			frameLength = 0;
 			readFrameBytes = 0;
@@ -399,6 +466,18 @@ public class MiniCapUtil implements ScreenSubject{
 		
 	}
 	
+	private Boolean compareByte(byte[] a, byte[] b) {
+		if (a.length != b.length)
+			return false;
+		
+		for (int i=0; i<a.length; i++) {
+			if (a[i] != b[i])
+				return false;
+		}
+		
+		return true;
+	}
+	
 	public void registerObserver(AndroidScreenObserver o) {
 		// TODO Auto-generated method stub
 		observers.add(o);
@@ -415,6 +494,12 @@ public class MiniCapUtil implements ScreenSubject{
 	
 	@Override
 	public void notifyObservers(BufferedImage image) {
+		int orien_real = dumpsOrientation();
+		if (orien_real != orientation_tag) {
+			orientation_tag = orien_real;
+			stopScreenListener();
+			startScreenListener();
+		}
 		for (AndroidScreenObserver observer : observers) {
 			observer.frameImageChange(image);
 		}

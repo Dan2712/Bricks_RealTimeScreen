@@ -1,9 +1,6 @@
 /MiniDecode/
-/RealtimeUI$DisplayThread.class
-/RealtimeUI$3.class
-/RealtimeUI$2.class
-/RealtimeUI$1.class
-/RealtimeUI$1$1.class
-/ScreenGUI$1.class
-/ScreenGUI$MyPanel.class
+/NodeSelection/
 /ScreenGUI.class
+/Util/
+/log4j.properties
+/ScreenGUI$1.class
